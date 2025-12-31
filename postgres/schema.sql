@@ -72,17 +72,26 @@ BEGIN
         setweight(to_tsvector('english', COALESCE(NEW.summary, '')), 'A') ||
         setweight(to_tsvector('english', COALESCE(NEW.search_text, '')), 'B') ||
         setweight(to_tsvector('english', COALESCE(
-            array_to_string(
-                ARRAY(SELECT jsonb_array_elements_text(NEW.tools_used)),
-                ' '
-            ), ''
+            CASE
+                WHEN jsonb_typeof(NEW.tools_used) = 'array' AND jsonb_array_length(NEW.tools_used) > 0
+                THEN array_to_string(ARRAY(SELECT jsonb_array_elements_text(NEW.tools_used)), ' ')
+                ELSE ''
+            END, ''
         )), 'C') ||
         setweight(to_tsvector('english', COALESCE(
-            array_to_string(
-                ARRAY(SELECT jsonb_array_elements_text(NEW.files_touched)),
-                ' '
-            ), ''
-        )), 'C');
+            CASE
+                WHEN jsonb_typeof(NEW.files_touched) = 'array' AND jsonb_array_length(NEW.files_touched) > 0
+                THEN regexp_replace(
+                    array_to_string(ARRAY(SELECT jsonb_array_elements_text(NEW.files_touched)), ' '),
+                    '[/\-_.]', ' ', 'g'
+                )
+                ELSE ''
+            END, ''
+        )), 'C') ||
+        -- Also index the cwd for project-level searches
+        setweight(to_tsvector('english', COALESCE(
+            regexp_replace(NEW.cwd, '[/\-_.]', ' ', 'g'), ''
+        )), 'D');
     NEW.updated_at := NOW();
     RETURN NEW;
 END;
