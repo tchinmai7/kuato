@@ -1,5 +1,5 @@
 /**
- * Parse Claude Code session JSONL files
+ * Parse Claude Code and OpenCode session files
  *
  * Extracts structured data from raw session transcripts including:
  * - Token usage (total and per-model)
@@ -7,6 +7,8 @@
  * - Tools used
  * - Files touched (from tool calls)
  * - Timestamps
+ *
+ * Supports both Claude Code JSONL format and OpenCode JSON export format
  */
 
 import { readFileSync } from 'fs';
@@ -15,13 +17,29 @@ import type {
   AssistantMessage,
   ParsedSession,
   ContentBlock,
+  OpenCodeSession,
 } from './types.js';
 
 /**
- * Parse a single JSONL file into structured session data
+ * Parse a single file - detects format automatically
  */
 export function parseSessionFile(filePath: string): ParsedSession | null {
   const content = readFileSync(filePath, 'utf-8');
+  
+  // Try to detect format
+  const trimmed = content.trim();
+  
+  // OpenCode JSON format (single JSON object)
+  if (trimmed.startsWith('{') && trimmed.includes('"info"') && trimmed.includes('"messages"')) {
+    try {
+      const session = JSON.parse(trimmed) as OpenCodeSession;
+      return parseOpenCodeSession(session);
+    } catch {
+      // Fall through to JSONL parsing
+    }
+  }
+  
+  // Claude Code JSONL format (newline-delimited JSON)
   return parseSessionContent(content, filePath);
 }
 
@@ -155,6 +173,7 @@ export function parseSessionContent(
     filesFromToolCalls: Array.from(filesFromToolCalls),
     modelsUsed: Array.from(modelsUsed),
     modelTokens,
+    sessionType: 'claude-code',
   };
 }
 
@@ -216,4 +235,68 @@ export function getSearchableText(session: ParsedSession): string {
   parts.push(...session.filesFromToolCalls);
 
   return parts.join(' ');
+}
+
+/**
+ * Parse OpenCode session export format
+ */
+export function parseOpenCodeSession(session: OpenCodeSession): ParsedSession {
+  const toolsUsed = new Set<string>();
+  const filesFromToolCalls = new Set<string>();
+  const userMessages: string[] = [];
+  const modelsUsed = new Set<string>();
+
+  // Extract data from messages
+  for (const message of session.messages) {
+    // Collect user messages
+    if (message.info.role === 'user' && message.parts) {
+      for (const part of message.parts) {
+        if (part.type === 'text' && part.text) {
+          userMessages.push(part.text);
+        }
+      }
+    }
+
+    // Collect tool calls
+    if (message.toolCalls) {
+      for (const toolCall of message.toolCalls) {
+        toolsUsed.add(toolCall.name);
+
+        // Extract file paths from common tool parameters
+        if (toolCall.parameters) {
+          const params = toolCall.parameters;
+          if (params.filePath) filesFromToolCalls.add(params.filePath);
+          if (params.path) filesFromToolCalls.add(params.path);
+          if (params.file) filesFromToolCalls.add(params.file);
+        }
+      }
+    }
+
+    // Collect models used
+    if (message.info.model) {
+      modelsUsed.add(message.info.model.modelID);
+    }
+  }
+
+  return {
+    id: session.info.id,
+    startedAt: new Date(session.info.time.created),
+    endedAt: new Date(session.info.time.updated),
+    directory: session.info.directory,
+    title: session.info.title || 'Untitled Session',
+    messageCount: session.messages.length,
+    toolsUsed: Array.from(toolsUsed),
+    filesFromToolCalls: Array.from(filesFromToolCalls),
+    userMessages,
+    modelsUsed: Array.from(modelsUsed),
+    inputTokens: 0, // OpenCode doesn't expose this in exports
+    outputTokens: 0,
+    cacheCreationTokens: 0,
+    cacheReadTokens: 0,
+    gitBranch: '',
+    cwd: session.info.directory,
+    version: '',
+    modelTokens: {},
+    sessionType: 'opencode',
+  };
 }

@@ -2,11 +2,11 @@
 
 Easily recall what you discussed with your favorite coding agents, what decisions you made, and where you left off so you can pick up where you left off as easily as asking "where did we leave off on XYZ..."
 
-This simple, fully local session recall skill works on Claude Code & other coding agents that support skills. Instant use with text search, optional local postgres with faster and more accurate search on larger session histories. 
+This simple, fully local session recall skill works with **Claude Code** and **OpenCode**. Instant use with text search, optional local postgres with faster and more accurate search on larger session histories. 
 
 ## The Problem
 
-Claude Code forgets everything between sessions. You're deep in a feature, close the tab, and the next day ask "where were we?" only to get a blank stare.
+Claude Code and OpenCode forget everything between sessions. You're deep in a feature, close the tab, and the next day ask "where were we?" only to get a blank stare.
 
 > **Kuato:** What do you want, Mr. Quaid?   
 > **Quaid:** The same as you; to remember.   
@@ -33,7 +33,9 @@ Kuato gives Claude access to what you *did* - the actions that define your work.
 
 ## Quick Start: File-Based
 
-Zero setup. Works directly with Claude Code's JSONL files.
+Zero setup. Works directly with Claude Code's JSONL files or OpenCode sessions.
+
+### Claude Code
 
 ```bash
 # Clone the repo
@@ -50,12 +52,26 @@ bun run file-based/search.ts --tools Edit,Bash --limit 10
 bun run file-based/search.ts --file-pattern "components/"
 ```
 
-Output is JSON with all session metadata:
+### OpenCode
+
+```bash
+# Search your OpenCode sessions
+bun run file-based/search-opencode.ts --query "email system" --days 7
+
+# Filter by tools used
+bun run file-based/search-opencode.ts --tools edit,bash --limit 10
+
+# Filter by file patterns
+bun run file-based/search-opencode.ts --file-pattern "components/"
+```
+
+Output is JSON with all session metadata (both Claude Code and OpenCode):
 
 ```json
 [
   {
     "id": "abc123-def456",
+    "title": "Add email filtering system",  // OpenCode only
     "startedAt": "2025-01-15T10:30:00Z",
     "endedAt": "2025-01-15T11:45:00Z",
     "messageCount": 42,
@@ -73,7 +89,7 @@ Output is JSON with all session metadata:
 
 ## Quick Start: PostgreSQL
 
-One-command database setup, then sync and search.
+One-command database setup, then sync and search sessions from both Claude Code and OpenCode.
 
 ```bash
 cd kuato/postgres
@@ -84,8 +100,15 @@ bun run db:up
 # Install dependencies
 bun install
 
-# Sync your sessions
+# Sync Claude Code sessions
 DATABASE_URL="postgres://claude:sessions@localhost:5433/claude_sessions" bun run sync
+
+# OR sync OpenCode sessions
+DATABASE_URL="postgres://claude:sessions@localhost:5433/claude_sessions" bun run sync-opencode
+
+# OR sync both!
+DATABASE_URL="postgres://claude:sessions@localhost:5433/claude_sessions" bun run sync
+DATABASE_URL="postgres://claude:sessions@localhost:5433/claude_sessions" bun run sync-opencode
 
 # Start API server
 DATABASE_URL="postgres://claude:sessions@localhost:5433/claude_sessions" bun run serve
@@ -127,6 +150,20 @@ When the user asks "where did we leave off" or "what did we discuss about X":
 
 See `shared/claude-skill.md` for a complete skill template.
 
+## Using with OpenCode
+
+OpenCode support is built-in. Use the file-based search scripts directly:
+
+```bash
+# Quick search
+bun run file-based/search-opencode.ts --query "authentication" --days 7
+
+# Or use the PostgreSQL API after syncing
+curl "http://localhost:3847/sessions?search=authentication&days=7"
+```
+
+The existing OpenCode adapter in `opencode-adapter/search.ts` is now deprecated in favor of the unified approach, but still works if you prefer it.
+
 ## How It Works
 
 ### The Key Insight: User Messages
@@ -142,8 +179,9 @@ Combined with `files_touched` and `tools_used`, you can reconstruct the session 
 
 ### File-Based Search
 
-Simple substring matching on user messages, tools, and file paths.
+Simple substring matching on user messages, tools, and file paths. Works with both Claude Code JSONL files and OpenCode sessions via the CLI.
 
+**Claude Code:**
 ```
 Query: "septa"
 ↓
@@ -159,12 +197,31 @@ Score by match count
 Return sorted results
 ```
 
-**Pros:** Zero setup, no dependencies beyond Bun
-**Cons:** Slower on large histories, no stemming ("running" won't match "run")
+**OpenCode:**
+```
+Query: "septa"
+↓
+List sessions via `opencode session list`
+↓
+Export each session via `opencode export`
+↓
+Check if "septa" appears in:
+  - title
+  - userMessages[]
+  - toolsUsed[]
+  - filesFromToolCalls[]
+↓
+Score by match count
+↓
+Return sorted results
+```
+
+**Pros:** Zero setup, no dependencies beyond Bun, works with both Claude Code and OpenCode  
+**Cons:** Slower on large histories, no stemming ("running" won't match "run"), OpenCode requires CLI export (can be slow)
 
 ### PostgreSQL Search
 
-Full-text search with linguistic processing using `tsvector` and `tsquery`.
+Full-text search with linguistic processing using `tsvector` and `tsquery`. Works seamlessly with both Claude Code and OpenCode sessions once synced.
 
 **Step 1: Text becomes tokens (tsvector)**
 
@@ -265,15 +322,30 @@ Returns: session count, token totals, breakdown by model.
 | `DATABASE_URL` | `postgres://localhost/claude_sessions` | PostgreSQL connection |
 | `PORT` | `3847` | API server port |
 
+Note: OpenCode sessions are accessed via the `opencode` CLI and don't require a directory path.
+
 ## Tips
 
 ### Scheduled Sync
 
 Run sync every 15 minutes to keep the database current:
 
+**Claude Code:**
 ```bash
 # crontab -e
 */15 * * * * cd /path/to/kuato/postgres && DATABASE_URL="..." bun run sync >> /var/log/kuato-sync.log 2>&1
+```
+
+**OpenCode:**
+```bash
+# crontab -e
+*/15 * * * * cd /path/to/kuato/postgres && DATABASE_URL="..." bun run sync-opencode >> /var/log/kuato-sync-opencode.log 2>&1
+```
+
+**Both:**
+```bash
+# crontab -e
+*/15 * * * * cd /path/to/kuato/postgres && DATABASE_URL="..." bun run sync && bun run sync-opencode >> /var/log/kuato-sync-all.log 2>&1
 ```
 
 ### Search Strategies
@@ -297,6 +369,57 @@ curl "http://localhost:3847/sessions?days=3&limit=50"
 ```bash
 curl "http://localhost:3847/sessions?search=refactor&tools=Edit&days=7"
 ```
+
+## Technical Details
+
+### OpenCode vs Claude Code
+
+Both are now fully supported with identical search capabilities:
+
+| Feature | Claude Code | OpenCode |
+|---------|-------------|----------|
+| **Access Method** | Direct JSONL file reading | CLI (`opencode export`) |
+| **Session Titles** | No | Yes |
+| **Token Tracking** | Full (input/output/cache) | Not exposed (set to 0) |
+| **Git Branch** | Yes | No |
+| **File Parsing** | JSONL (newline-delimited) | JSON (single object) |
+
+### Unified Schema
+
+Both formats are normalized to the same internal structure:
+
+```typescript
+interface ParsedSession {
+  id: string;
+  title?: string;              // OpenCode only
+  startedAt: Date;
+  endedAt: Date;
+  cwd: string;                 // Working directory
+  userMessages: string[];      // What the user said
+  toolsUsed: string[];         // Tools called (Edit, Bash, etc)
+  filesFromToolCalls: string[]; // Files touched
+  modelsUsed: string[];        // AI models used
+  sessionType?: 'claude-code' | 'opencode';
+}
+```
+
+This allows seamless searching across both sources using the same API.
+
+### Implementation Files
+
+**New:**
+- `file-based/search-opencode.ts` - OpenCode CLI-based search
+- `postgres/sync-opencode.ts` - OpenCode PostgreSQL sync
+
+**Modified:**
+- `shared/parser.ts` - Added `parseOpenCodeSession()` and format auto-detection
+- `shared/types.ts` - Added `OpenCodeSession` interface
+
+**Package Scripts:**
+- `bun run search:opencode` - Search OpenCode sessions (file-based)
+- `bun run sync:opencode` - Sync OpenCode to PostgreSQL
+
+All existing Claude Code functionality remains unchanged and fully compatible.
 
 ## Contributing
 

@@ -1,6 +1,8 @@
 /**
- * Types for Claude Code session JSONL format
+ * Types for Claude Code and OpenCode session formats
  */
+
+// ===== Claude Code JSONL Format =====
 
 export interface SessionMessage {
   parentUuid: string | null;
@@ -53,8 +55,47 @@ export interface TokenUsage {
   service_tier?: string;
 }
 
+// ===== OpenCode Export Format =====
+
+export interface OpenCodeSession {
+  info: {
+    id: string;
+    directory: string;
+    title: string;
+    time: {
+      created: number;
+      updated: number;
+    };
+    summary?: {
+      additions: number;
+      deletions: number;
+      files: number;
+    };
+  };
+  messages: Array<{
+    info: {
+      id: string;
+      role: 'user' | 'assistant';
+      time: { created: number };
+      agent?: string;
+      model?: {
+        providerID: string;
+        modelID: string;
+      };
+    };
+    parts?: Array<{
+      type: string;
+      text?: string;
+    }>;
+    toolCalls?: Array<{
+      name: string;
+      parameters?: any;
+    }>;
+  }>;
+}
+
 /**
- * Parsed session data extracted from JSONL
+ * Parsed session data extracted from JSONL (unified for both Claude Code and OpenCode)
  */
 export interface ParsedSession {
   id: string;
@@ -84,6 +125,10 @@ export interface ParsedSession {
     cacheCreation: number;
     cacheRead: number;
   }>;
+
+  // Optional fields
+  title?: string; // OpenCode has titles
+  sessionType?: 'claude-code' | 'opencode'; // Track source
 }
 
 /**
@@ -92,7 +137,7 @@ export interface ParsedSession {
 export interface SearchResult extends ParsedSession {
   relevance?: number;
   matchedOn?: string[];
-  transcriptPath: string;
+  transcriptPath?: string;
 }
 
 /**

@@ -1,16 +1,19 @@
 {
   "name": "kuato",
   "version": "0.1.0",
-  "description": "Open your mind. Session memory for Claude Code.",
+  "description": "Open your mind. Session memory for Claude Code and OpenCode.",
   "type": "module",
   "scripts": {
     "search": "bun run file-based/search.ts",
+    "search:opencode": "bun run file-based/search-opencode.ts",
     "sync": "bun run postgres/sync.ts",
+    "sync:opencode": "bun run postgres/sync-opencode.ts",
     "serve": "bun run postgres/api.ts"
   },
   "keywords": [
     "claude",
     "claude-code",
+    "opencode",
     "ai",
     "sessions",
     "search",
